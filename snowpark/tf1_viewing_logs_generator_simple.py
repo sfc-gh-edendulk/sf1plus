@@ -159,28 +159,28 @@ def run(
         ),
         final AS (
             SELECT 
-                log_id,
-                channel,
-                event_time,
-                slot_start_time,
-                programme_id,
-                customer_id,
-                device_type,
-                os_name,
-                connection_type,
-                bitrate_kbps,
-                buffer_events,
-                rebuffer_ratio,
-                watch_seconds,
-                CAST(FLOOR(watch_seconds / 180) AS INTEGER) AS ad_breaks,
-                CAST(FLOOR(watch_seconds / 180) * 30 AS INTEGER) AS ad_total_seconds,
-                event_type,
-                ip_address,
-                isp,
-                country,
-                region,
-                city,
-                OBJECT_CONSTRUCT(
+                CAST(log_id AS STRING) AS log_id,
+                CAST(channel AS STRING) AS channel,
+                CAST(event_time AS TIMESTAMP_NTZ) AS event_time,
+                CAST(slot_start_time AS TIMESTAMP_NTZ) AS slot_start_time,
+                CAST(programme_id AS STRING) AS programme_id,
+                CAST(customer_id AS STRING) AS customer_id,
+                CAST(device_type AS STRING) AS device_type,
+                CAST(os_name AS STRING) AS os_name,
+                CAST(connection_type AS STRING) AS connection_type,
+                CAST(bitrate_kbps AS NUMBER) AS bitrate_kbps,
+                CAST(buffer_events AS NUMBER) AS buffer_events,
+                CAST(rebuffer_ratio AS FLOAT) AS rebuffer_ratio,
+                CAST(watch_seconds AS NUMBER) AS watch_seconds,
+                CAST(FLOOR(watch_seconds / 180) AS NUMBER) AS ad_breaks,
+                CAST(FLOOR(watch_seconds / 180) * 30 AS NUMBER) AS ad_total_seconds,
+                CAST(event_type AS STRING) AS event_type,
+                CAST(ip_address AS STRING) AS ip_address,
+                CAST(isp AS STRING) AS isp,
+                CAST(country AS STRING) AS country,
+                CAST(region AS STRING) AS region,
+                CAST(city AS STRING) AS city,
+                CAST(OBJECT_CONSTRUCT(
                     'device_id', UUID_STRING(),
                     'session_id', UUID_STRING(),
                     'app_name', 'TF1+',
@@ -198,7 +198,7 @@ def run(
                     'model', CASE WHEN device_type='SmartTV' THEN 'QE55' 
                                   WHEN device_type='Mobile' THEN 'iPhone' 
                                   ELSE 'web' END
-                ) AS device
+                ) AS VARIANT) AS device
             FROM enriched
         )
         SELECT * FROM final
