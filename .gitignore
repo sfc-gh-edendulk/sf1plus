@@ -1,0 +1,9 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.class
+.venv/
+.env
+.ipynb_checkpoints/
+.DS_Store
+

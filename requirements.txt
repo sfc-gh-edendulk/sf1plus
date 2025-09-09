@@ -1,0 +1,5 @@
+snowflake-snowpark-python[pandas]>=1.12.1
+faker>=25.0.0
+numpy>=1.26.0
+pandas>=2.2.0
+
