@@ -34,7 +34,7 @@ def run(
     full_table = f"{TARGET_DB}.{RAW_SCHEMA}.{OUTPUT_TABLE}"
     attach_pct = max(0.0, min(1.0, float(attach_customer_pct)))
 
-    # Simple approach: generate base data with deterministic patterns
+    # Ultra-simple approach: no subqueries, just deterministic patterns
     select_sql = f"""
         WITH base_events AS (
             SELECT 
@@ -45,11 +45,6 @@ def run(
                 ) AS event_time
             FROM TABLE(GENERATOR(ROWCOUNT => {2016 * sample_multiplier}))
         ),
-        customers_sample AS (
-            SELECT customer_id, ROW_NUMBER() OVER (ORDER BY RANDOM()) AS rn
-            FROM {CUSTOMER_TABLE}
-            SAMPLE (5)
-        ),
         enriched AS (
             SELECT 
                 UUID_STRING() AS log_id,
@@ -58,11 +53,9 @@ def run(
                 DATE_TRUNC('hour', event_time) AS slot_start_time,
                 'TF1-' || TO_CHAR(event_time, 'YYYYMMDD-HH24MI') AS programme_id,
                 
-                -- Attach customer for specified percentage
+                -- Attach synthetic customer IDs for specified percentage
                 CASE WHEN (event_id % 100) < ({attach_pct} * 100) THEN 
-                    (SELECT customer_id FROM customers_sample 
-                     WHERE rn = ((event_id % (SELECT COUNT(*) FROM customers_sample)) + 1)
-                     LIMIT 1)
+                    'SF1-' || LPAD((event_id % 1000000)::STRING, 10, '0')
                 ELSE NULL END AS customer_id,
                 
                 -- Device type based on event_id modulo
