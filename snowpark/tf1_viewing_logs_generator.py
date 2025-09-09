@@ -152,54 +152,59 @@ def run(
             LEFT JOIN cust_pool cp
               ON ((slot_index * 1000 + event_seq) % (SELECT mx FROM pool_max)) + 1 = cp.rn
         ),
-        with_device AS (
+        with_device1 AS (
             SELECT 
-                log_id, channel, slot_start_time, event_time, programme_id, customer_id,
-                /* Device type */
+                log_id, channel, slot_start_time, event_time, programme_id, customer_id, slot_index, event_seq,
+                /* Deterministic ratios from slot/event */
+                (ABS(HASH(slot_index, event_seq)) % 1000) / 1000.0 AS r1,
+                (ABS(HASH(slot_index, event_seq, 1)) % 1000) / 1000.0 AS r2,
+                (ABS(HASH(slot_index, event_seq, 2)) % 1000) / 1000.0 AS r3,
+                (ABS(HASH(slot_index, event_seq, 3)) % 1000) / 1000.0 AS r4,
+                /* Device type by r1 */
                 CASE 
-                    WHEN UNIFORM(0,1,RANDOM()) < 0.45 THEN 'SmartTV'
-                    WHEN UNIFORM(0,1,RANDOM()) < 0.70 THEN 'Mobile'
-                    WHEN UNIFORM(0,1,RANDOM()) < 0.85 THEN 'Web'
+                    WHEN (ABS(HASH(slot_index, event_seq)) % 1000) / 1000.0 < 0.45 THEN 'SmartTV'
+                    WHEN (ABS(HASH(slot_index, event_seq)) % 1000) / 1000.0 < 0.70 THEN 'Mobile'
+                    WHEN (ABS(HASH(slot_index, event_seq)) % 1000) / 1000.0 < 0.85 THEN 'Web'
                     ELSE 'Tablet'
                 END AS device_type,
-                /* OS by device type (approximate) */
+                /* OS name driven by r1 (device bucket) and r2 */
                 CASE 
-                    WHEN device_type = 'SmartTV' THEN 
-                        CASE WHEN UNIFORM(0,1,RANDOM()) < 0.5 THEN 'Tizen' WHEN UNIFORM(0,1,RANDOM()) < 0.8 THEN 'webOS' ELSE 'Android TV' END
-                    WHEN device_type = 'Mobile' THEN 
-                        CASE WHEN UNIFORM(0,1,RANDOM()) < 0.5 THEN 'Android' ELSE 'iOS' END
-                    WHEN device_type = 'Tablet' THEN 
-                        CASE WHEN UNIFORM(0,1,RANDOM()) < 0.5 THEN 'Android' ELSE 'iPadOS' END
-                    ELSE 'ChromeOS'
+                    WHEN (ABS(HASH(slot_index, event_seq)) % 1000) / 1000.0 < 0.45 THEN 
+                        CASE WHEN (ABS(HASH(slot_index, event_seq, 1)) % 1000) / 1000.0 < 0.5 THEN 'Tizen' 
+                             WHEN (ABS(HASH(slot_index, event_seq, 1)) % 1000) / 1000.0 < 0.8 THEN 'webOS' ELSE 'Android TV' END
+                    WHEN (ABS(HASH(slot_index, event_seq)) % 1000) / 1000.0 < 0.70 THEN 
+                        CASE WHEN (ABS(HASH(slot_index, event_seq, 1)) % 1000) / 1000.0 < 0.5 THEN 'Android' ELSE 'iOS' END
+                    WHEN (ABS(HASH(slot_index, event_seq)) % 1000) / 1000.0 < 0.85 THEN 'ChromeOS'
+                    ELSE 
+                        CASE WHEN (ABS(HASH(slot_index, event_seq, 1)) % 1000) / 1000.0 < 0.5 THEN 'Android' ELSE 'iPadOS' END
                 END AS os_name,
-                /* Connection type */
-                CASE WHEN UNIFORM(0,1,RANDOM()) < 0.7 THEN 'wifi' WHEN UNIFORM(0,1,RANDOM()) < 0.9 THEN 'ethernet' ELSE 'cellular' END AS connection_type,
-                /* Bitrate and quality */
+                /* Connection type via r3 */
+                CASE WHEN (ABS(HASH(slot_index, event_seq, 2)) % 1000) / 1000.0 < 0.7 THEN 'wifi' 
+                     WHEN (ABS(HASH(slot_index, event_seq, 2)) % 1000) / 1000.0 < 0.9 THEN 'ethernet' ELSE 'cellular' END AS connection_type,
+                /* Bitrate and QoE */
                 CAST(ROUND(UNIFORM(800, 6500, RANDOM()))) AS bitrate_kbps,
                 CAST(ROUND(UNIFORM(0, 5, RANDOM()))) AS buffer_events,
                 ROUND(UNIFORM(0, 0.08, RANDOM()), 3) AS rebuffer_ratio,
                 CAST(ROUND(UNIFORM(30, 1800, RANDOM()))) AS watch_seconds,
-                /* IP address ranges (FR ISPs) */
+                /* IP selection via r4 */
                 CASE 
-                    WHEN UNIFORM(0,1,RANDOM()) < 0.4 THEN 
+                    WHEN (ABS(HASH(slot_index, event_seq, 3)) % 1000) / 1000.0 < 0.4 THEN 
                         '81.' || LPAD(CAST(UNIFORM(48, 63, RANDOM()) AS STRING), 2, '0') || '.' || CAST(UNIFORM(0,255,RANDOM()) AS STRING) || '.' || CAST(UNIFORM(0,255,RANDOM()) AS STRING)
-                    WHEN UNIFORM(0,1,RANDOM()) < 0.7 THEN 
+                    WHEN (ABS(HASH(slot_index, event_seq, 3)) % 1000) / 1000.0 < 0.7 THEN 
                         '82.' || LPAD(CAST(UNIFORM(64, 127, RANDOM()) AS STRING), 3, '0') || '.' || CAST(UNIFORM(0,255,RANDOM()) AS STRING) || '.' || CAST(UNIFORM(0,255,RANDOM()) AS STRING)
                     ELSE 
                         '90.' || CAST(UNIFORM(0,255,RANDOM()) AS STRING) || '.' || CAST(UNIFORM(0,255,RANDOM()) AS STRING) || '.' || CAST(UNIFORM(0,255,RANDOM()) AS STRING)
                 END AS ip_address,
-                /* ISP name */
                 CASE 
-                    WHEN LEFT(ip_address, 3) = '81.' THEN 'Orange'
-                    WHEN LEFT(ip_address, 3) = '82.' THEN 'Free'
+                    WHEN (ABS(HASH(slot_index, event_seq, 3)) % 1000) / 1000.0 < 0.4 THEN 'Orange'
+                    WHEN (ABS(HASH(slot_index, event_seq, 3)) % 1000) / 1000.0 < 0.7 THEN 'Free'
                     ELSE 'Bouygues'
                 END AS isp,
-                /* Geo */
                 'FR' AS country,
                 CASE MOD(slot_index, 6)
                     WHEN 0 THEN 'Île-de-France'
                     WHEN 1 THEN 'Auvergne-Rhône-Alpes'
-                    WHEN 2 THEN 'Provence-Alpes-Côte d\'Azur'
+                    WHEN 2 THEN 'Provence-Alpes-Côte d''Azur'
                     WHEN 3 THEN 'Nouvelle-Aquitaine'
                     WHEN 4 THEN 'Occitanie'
                     ELSE 'Hauts-de-France'
@@ -212,18 +217,26 @@ def run(
                     WHEN 4 THEN 'Toulouse'
                     ELSE 'Lille'
                 END AS city,
-                /* Ad metrics */
-                CAST(FLOOR(watch_seconds / 180) AS INTEGER) AS ad_breaks,
-                CAST(FLOOR(watch_seconds / 180) * 30 AS INTEGER) AS ad_total_seconds,
-                /* Event type */
                 CASE 
                     WHEN UNIFORM(0,1,RANDOM()) < 0.05 THEN 'play_start'
                     WHEN UNIFORM(0,1,RANDOM()) < 0.80 THEN 'play'
                     WHEN UNIFORM(0,1,RANDOM()) < 0.90 THEN 'pause'
                     WHEN UNIFORM(0,1,RANDOM()) < 0.97 THEN 'seek'
                     ELSE 'play_end'
-                END AS event_type,
-                /* Semi-structured device details */
+                END AS event_type
+            FROM with_customer
+        ),
+        with_device AS (
+            SELECT 
+                log_id, channel, slot_start_time, event_time, programme_id, customer_id,
+                device_type, os_name, connection_type,
+                bitrate_kbps, buffer_events, rebuffer_ratio, watch_seconds,
+                /* Derived */
+                CAST(FLOOR(watch_seconds / 180) AS INTEGER) AS ad_breaks,
+                CAST(FLOOR(watch_seconds / 180) * 30 AS INTEGER) AS ad_total_seconds,
+                event_type,
+                ip_address, isp, country, region, city,
+                /* Semi-structured device details built from prior columns */
                 OBJECT_CONSTRUCT(
                     'device_id', UUID_STRING(),
                     'session_id', UUID_STRING(),
@@ -235,7 +248,7 @@ def run(
                     'manufacturer', CASE WHEN device_type='SmartTV' THEN 'Samsung' WHEN device_type='Mobile' THEN 'Apple' ELSE 'LG' END,
                     'model', CASE WHEN device_type='SmartTV' THEN 'QE55' WHEN device_type='Mobile' THEN 'iPhone' ELSE 'web' END
                 ) AS device
-            FROM with_customer
+            FROM with_device1
         )
         SELECT 
             log_id,
