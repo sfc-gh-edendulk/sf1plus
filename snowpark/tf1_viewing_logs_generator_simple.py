@@ -33,6 +33,15 @@ def run(
 
     full_table = f"{TARGET_DB}.{RAW_SCHEMA}.{OUTPUT_TABLE}"
     attach_pct = max(0.0, min(1.0, float(attach_customer_pct)))
+    
+    # Create a temporary customer mapping table to work around subquery limitations
+    temp_customer_map = f"{TARGET_DB}.{RAW_SCHEMA}.TEMP_CUSTOMER_MAP"
+    _exec(session, f"""
+        CREATE OR REPLACE TABLE {temp_customer_map} AS
+        SELECT customer_id, ROW_NUMBER() OVER (ORDER BY RANDOM()) AS rn
+        FROM {CUSTOMER_TABLE}
+        SAMPLE (10)
+    """)
 
     # Ultra-simple approach: no subqueries, just deterministic patterns
     select_sql = f"""
@@ -45,21 +54,30 @@ def run(
                 ) AS event_time
             FROM TABLE(GENERATOR(ROWCOUNT => {2016 * sample_multiplier}))
         ),
+        customer_map AS (
+            SELECT customer_id, rn FROM {temp_customer_map}
+        ),
+        events_with_customer_flag AS (
+            SELECT 
+                event_id,
+                event_time,
+                CASE WHEN (event_id % 100) < ({attach_pct} * 100) THEN 1 ELSE 0 END AS should_attach_customer,
+                ((event_id % 1000) + 1) AS customer_rn_target
+            FROM base_events
+        ),
         enriched AS (
             SELECT 
                 UUID_STRING() AS log_id,
                 'TF1' AS channel,
-                event_time,
-                DATE_TRUNC('hour', event_time) AS slot_start_time,
-                'TF1-' || TO_CHAR(event_time, 'YYYYMMDD-HH24MI') AS programme_id,
+                e.event_time,
+                DATE_TRUNC('hour', e.event_time) AS slot_start_time,
+                'TF1-' || TO_CHAR(e.event_time, 'YYYYMMDD-HH24MI') AS programme_id,
                 
-                -- Attach synthetic customer IDs for specified percentage
-                CASE WHEN (event_id % 100) < ({attach_pct} * 100) THEN 
-                    'SF1-' || LPAD((event_id % 1000000)::STRING, 10, '0')
-                ELSE NULL END AS customer_id,
+                -- Use actual customer IDs via LEFT JOIN
+                CASE WHEN e.should_attach_customer = 1 THEN c.customer_id ELSE NULL END AS customer_id,
                 
                 -- Device type based on event_id modulo
-                CASE (event_id % 4)
+                CASE (e.event_id % 4)
                     WHEN 0 THEN 'SmartTV'
                     WHEN 1 THEN 'Mobile'
                     WHEN 2 THEN 'Web'
@@ -68,30 +86,30 @@ def run(
                 
                 -- OS based on device type
                 CASE 
-                    WHEN (event_id % 4) = 0 THEN 
-                        CASE (event_id % 3) WHEN 0 THEN 'Tizen' WHEN 1 THEN 'webOS' ELSE 'Android TV' END
-                    WHEN (event_id % 4) = 1 THEN 
-                        CASE (event_id % 2) WHEN 0 THEN 'Android' ELSE 'iOS' END
-                    WHEN (event_id % 4) = 2 THEN 'ChromeOS'
+                    WHEN (e.event_id % 4) = 0 THEN 
+                        CASE (e.event_id % 3) WHEN 0 THEN 'Tizen' WHEN 1 THEN 'webOS' ELSE 'Android TV' END
+                    WHEN (e.event_id % 4) = 1 THEN 
+                        CASE (e.event_id % 2) WHEN 0 THEN 'Android' ELSE 'iOS' END
+                    WHEN (e.event_id % 4) = 2 THEN 'ChromeOS'
                     ELSE 
-                        CASE (event_id % 2) WHEN 0 THEN 'Android' ELSE 'iPadOS' END
+                        CASE (e.event_id % 2) WHEN 0 THEN 'Android' ELSE 'iPadOS' END
                 END AS os_name,
                 
                 -- Connection type
-                CASE (event_id % 3)
+                CASE (e.event_id % 3)
                     WHEN 0 THEN 'wifi'
                     WHEN 1 THEN 'ethernet'
                     ELSE 'cellular'
                 END AS connection_type,
                 
                 -- QoE metrics
-                800 + (event_id % 5700) AS bitrate_kbps,
-                event_id % 6 AS buffer_events,
-                ROUND((event_id % 80) / 1000.0, 3) AS rebuffer_ratio,
-                30 + (event_id % 1770) AS watch_seconds,
+                800 + (e.event_id % 5700) AS bitrate_kbps,
+                e.event_id % 6 AS buffer_events,
+                ROUND((e.event_id % 80) / 1000.0, 3) AS rebuffer_ratio,
+                30 + (e.event_id % 1770) AS watch_seconds,
                 
                 -- Event type
-                CASE (event_id % 20)
+                CASE (e.event_id % 20)
                     WHEN 0 THEN 'play_start'
                     WHEN 19 THEN 'play_end'
                     WHEN 18 THEN 'pause'
@@ -100,16 +118,16 @@ def run(
                 END AS event_type,
                 
                 -- IP and geo
-                CASE (event_id % 3)
-                    WHEN 0 THEN '81.' || LPAD((48 + (event_id % 16))::STRING, 2, '0') || '.' || 
-                               ((event_id % 256))::STRING || '.' || ((event_id * 7) % 256)::STRING
-                    WHEN 1 THEN '82.' || LPAD((64 + (event_id % 64))::STRING, 3, '0') || '.' || 
-                               ((event_id % 256))::STRING || '.' || ((event_id * 7) % 256)::STRING
-                    ELSE '90.' || ((event_id % 256))::STRING || '.' || 
-                         ((event_id * 3) % 256)::STRING || '.' || ((event_id * 7) % 256)::STRING
+                CASE (e.event_id % 3)
+                    WHEN 0 THEN '81.' || LPAD((48 + (e.event_id % 16))::STRING, 2, '0') || '.' || 
+                               ((e.event_id % 256))::STRING || '.' || ((e.event_id * 7) % 256)::STRING
+                    WHEN 1 THEN '82.' || LPAD((64 + (e.event_id % 64))::STRING, 3, '0') || '.' || 
+                               ((e.event_id % 256))::STRING || '.' || ((e.event_id * 7) % 256)::STRING
+                    ELSE '90.' || ((e.event_id % 256))::STRING || '.' || 
+                         ((e.event_id * 3) % 256)::STRING || '.' || ((e.event_id * 7) % 256)::STRING
                 END AS ip_address,
                 
-                CASE (event_id % 3)
+                CASE (e.event_id % 3)
                     WHEN 0 THEN 'Orange'
                     WHEN 1 THEN 'Free'
                     ELSE 'Bouygues'
@@ -117,7 +135,7 @@ def run(
                 
                 'FR' AS country,
                 
-                CASE (event_id % 6)
+                CASE (e.event_id % 6)
                     WHEN 0 THEN 'Île-de-France'
                     WHEN 1 THEN 'Auvergne-Rhône-Alpes'
                     WHEN 2 THEN 'Provence-Alpes-Côte d''Azur'
@@ -126,7 +144,7 @@ def run(
                     ELSE 'Hauts-de-France'
                 END AS region,
                 
-                CASE (event_id % 6)
+                CASE (e.event_id % 6)
                     WHEN 0 THEN 'Paris'
                     WHEN 1 THEN 'Lyon'
                     WHEN 2 THEN 'Marseille'
@@ -135,8 +153,9 @@ def run(
                     ELSE 'Lille'
                 END AS city,
                 
-                event_id
-            FROM base_events
+                e.event_id
+            FROM events_with_customer_flag e
+            LEFT JOIN customer_map c ON c.rn = e.customer_rn_target
         ),
         final AS (
             SELECT 
@@ -153,8 +172,8 @@ def run(
                 buffer_events,
                 rebuffer_ratio,
                 watch_seconds,
-                FLOOR(watch_seconds / 180) AS ad_breaks,
-                FLOOR(watch_seconds / 180) * 30 AS ad_total_seconds,
+                CAST(FLOOR(watch_seconds / 180) AS INTEGER) AS ad_breaks,
+                CAST(FLOOR(watch_seconds / 180) * 30 AS INTEGER) AS ad_total_seconds,
                 event_type,
                 ip_address,
                 isp,
@@ -190,6 +209,9 @@ def run(
     else:
         _exec(session, f"CREATE TABLE IF NOT EXISTS {full_table} AS " + select_sql + " WHERE 1=0")
         _exec(session, f"INSERT INTO {full_table} " + select_sql)
+
+    # Clean up temp table
+    _exec(session, f"DROP TABLE IF EXISTS {temp_customer_map}")
 
     return session.sql(f"SELECT * FROM {full_table} SAMPLE (100 ROWS)")
 
