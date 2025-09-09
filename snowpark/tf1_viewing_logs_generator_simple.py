@@ -48,11 +48,11 @@ def run(
         WITH base_events AS (
             SELECT 
                 ROW_NUMBER() OVER (ORDER BY SEQ4()) AS event_id,
-                DATEADD('minute', 
-                    (ROW_NUMBER() OVER (ORDER BY SEQ4()) - 1) * 5, 
+                DATEADD('second', 
+                    (ROW_NUMBER() OVER (ORDER BY SEQ4()) - 1) * 12, 
                     DATE_TRUNC('WEEK', CURRENT_DATE())
                 ) AS event_time
-            FROM TABLE(GENERATOR(ROWCOUNT => {2016 * sample_multiplier}))
+            FROM TABLE(GENERATOR(ROWCOUNT => {50000 * sample_multiplier}))
         ),
         customer_map AS (
             SELECT customer_id, rn FROM {temp_customer_map}
