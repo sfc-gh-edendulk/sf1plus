@@ -1,0 +1,8 @@
+- Verified Git remote `origin` -> `https://github.com/sfc-gh-edendulk/sf1plus.git`.
+- Activated conda env `sf1plus` (Python 3.10.18); deps from environment.yml present.
+- Added `snowpark/sf1plus_crm_generator.py`:
+  - Generates 4,000,000 SF1+ CRM rows into `SF1PLUS_DB.RAW_DATA.SF1PLUS_CRM`.
+  - 25% overlap with `CROCEVIA_DB.RAW_DATA.CROCEVIA_CRM` across TRIPLE/EMAIL/PHONE (8/10/7 parts).
+  - Overlap assigned only on base 90%; duplicates (10%) sampled from NON-overlap to keep 25% target exact.
+  - Missingness: 15% emails and 20% phones outside overlap sets; small email/phone mutations on duplicates.
+  - SP entrypoints: `run(session, target_rows, overwrite)` and `sp_entry(session, target_rows?, overwrite)`.

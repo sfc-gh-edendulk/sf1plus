@@ -56,46 +56,27 @@ def run(session: Session, target_rows: int = 4_000_000, overwrite: bool = True) 
     email_extra_count = int(round(overlap_total_target * email_share / sum_share))
     phone_extra_count = overlap_total_target - triple_count - email_extra_count
 
-    # Temp objects (use UUID suffix for uniqueness across concurrent runs)
-    _suffix = uuid.uuid4().hex[:6]
-    tmp_source = f"TEMP_SF1_SOURCE_{_suffix}"
-    tmp_base = f"TEMP_SF1_BASE_{_suffix}"
-    tmp_final = f"TEMP_SF1_FINAL_{_suffix}"
-
-    # Source sample for overlaps (ensure enough rows, cycle via modulo)
-    _exec(
-        session,
-        f"""
-        CREATE OR REPLACE TEMPORARY TABLE {tmp_source} AS
-        SELECT 
-            EMAIL AS SRC_EMAIL,
-            PHONE AS SRC_PHONE,
-            FIRST_NAME AS SRC_FIRST_NAME,
-            LAST_NAME AS SRC_LAST_NAME,
-            ROW_NUMBER() OVER (ORDER BY RANDOM()) AS SRC_RN
-        FROM {SOURCE_TABLE}
-        WHERE EMAIL IS NOT NULL OR PHONE IS NOT NULL
-        """,
-    )
-
-    # Build base dataset with deterministic French-flavored values and overlap assignments
-    _exec(
-        session,
-        f"""
-        CREATE OR REPLACE TEMPORARY TABLE {tmp_base} AS
-        WITH base_rows AS (
+    # Build final dataset in one CTAS to avoid temporary tables in SP runtime
+    full_table = f"{TARGET_DB}.{RAW_SCHEMA}.{OUTPUT_TABLE}"
+    select_sql = f"""
+        WITH source_sample AS (
             SELECT 
-                ROW_NUMBER() OVER (ORDER BY SEQ4()) AS row_id
+                EMAIL AS SRC_EMAIL,
+                PHONE AS SRC_PHONE,
+                FIRST_NAME AS SRC_FIRST_NAME,
+                LAST_NAME AS SRC_LAST_NAME,
+                ROW_NUMBER() OVER (ORDER BY RANDOM()) AS SRC_RN
+            FROM {SOURCE_TABLE}
+            WHERE EMAIL IS NOT NULL OR PHONE IS NOT NULL
+        ),
+        base_rows AS (
+            SELECT ROW_NUMBER() OVER (ORDER BY SEQ4()) AS row_id
             FROM TABLE(GENERATOR(ROWCOUNT => {base_count}))
         ),
         thresholds AS (
-            SELECT 
-                {triple_count} AS t_triple,
-                {triple_count + email_extra_count} AS t_email,
-                {triple_count + email_extra_count + phone_extra_count} AS t_phone
-        ),
-        src AS (
-            SELECT *, (SRC_RN) AS k FROM {tmp_source}
+            SELECT {triple_count} AS t_triple,
+                   {triple_count + email_extra_count} AS t_email,
+                   {triple_count + email_extra_count + phone_extra_count} AS t_phone
         ),
         assigned AS (
             SELECT 
@@ -106,7 +87,6 @@ def run(session: Session, target_rows: int = 4_000_000, overwrite: bool = True) 
                     WHEN b.row_id <= (SELECT t_phone FROM thresholds) THEN 'PHONE'
                     ELSE 'NONE'
                 END AS overlap_type,
-                /* Deterministic name lists */
                 CASE (b.row_id % 20)
                     WHEN 0 THEN 'Jean' WHEN 1 THEN 'Marie' WHEN 2 THEN 'Pierre' WHEN 3 THEN 'Sophie'
                     WHEN 4 THEN 'Michel' WHEN 5 THEN 'Catherine' WHEN 6 THEN 'Philippe' WHEN 7 THEN 'Nathalie'
@@ -123,27 +103,20 @@ def run(session: Session, target_rows: int = 4_000_000, overwrite: bool = True) 
                     WHEN 20 THEN 'Morel' WHEN 21 THEN 'Girard' WHEN 22 THEN 'Andre' WHEN 23 THEN 'Lefevre'
                     ELSE 'Mercier'
                 END AS gen_last_name,
-                /* Join key for cycling through source sample */
-                (b.row_id % NULLIF((SELECT MAX(SRC_RN) FROM {tmp_source}), 0)) + 1 AS src_k
+                /* Join key cycling through source sample size */
+                (b.row_id % NULLIF((SELECT MAX(SRC_RN) FROM source_sample), 0)) + 1 AS src_k
             FROM base_rows b
         ),
         joined AS (
             SELECT a.*, s.SRC_EMAIL, s.SRC_PHONE, s.SRC_FIRST_NAME, s.SRC_LAST_NAME
             FROM assigned a
-            LEFT JOIN {tmp_source} s
+            LEFT JOIN source_sample s
               ON s.SRC_RN = a.src_k
         ),
         enriched AS (
             SELECT 
-                /* Identity fields with controlled overlap */
-                CASE overlap_type 
-                    WHEN 'TRIPLE' THEN COALESCE(SRC_FIRST_NAME, gen_first_name)
-                    ELSE gen_first_name
-                END AS first_name,
-                CASE overlap_type 
-                    WHEN 'TRIPLE' THEN COALESCE(SRC_LAST_NAME, gen_last_name)
-                    ELSE gen_last_name
-                END AS last_name,
+                CASE overlap_type WHEN 'TRIPLE' THEN COALESCE(SRC_FIRST_NAME, gen_first_name) ELSE gen_first_name END AS first_name,
+                CASE overlap_type WHEN 'TRIPLE' THEN COALESCE(SRC_LAST_NAME, gen_last_name) ELSE gen_last_name END AS last_name,
                 CASE overlap_type
                     WHEN 'TRIPLE' THEN SRC_EMAIL
                     WHEN 'EMAIL' THEN SRC_EMAIL
@@ -162,7 +135,6 @@ def run(session: Session, target_rows: int = 4_000_000, overwrite: bool = True) 
                          LPAD(UNIFORM(10, 99, RANDOM()), 2, '0') || ' ' ||
                          LPAD(UNIFORM(10, 99, RANDOM()), 2, '0')
                 END AS phone_raw,
-                /* Other streaming-specific fields */
                 CASE (row_id % 2) WHEN 0 THEN 'Male' ELSE 'Female' END AS gender,
                 CASE (row_id % 8)
                     WHEN 0 THEN 'Engineer' WHEN 1 THEN 'Teacher' WHEN 2 THEN 'Student' WHEN 3 THEN 'Nurse'
@@ -181,7 +153,6 @@ def run(session: Session, target_rows: int = 4_000_000, overwrite: bool = True) 
                 'SF1-' || LPAD(row_id::STRING, 10, '0') AS customer_id,
                 first_name,
                 last_name,
-                /* Missingness: outside overlap sets */
                 CASE WHEN overlap_type IN ('TRIPLE','EMAIL') THEN email_raw
                      WHEN UNIFORM(0,1,RANDOM()) < 0.15 THEN NULL
                      ELSE email_raw END AS email,
@@ -190,20 +161,10 @@ def run(session: Session, target_rows: int = 4_000_000, overwrite: bool = True) 
                      ELSE phone_raw END AS phone,
                 gender, profession, date_joined, subscription_level, overlap_type
             FROM enriched
-        )
-        SELECT * FROM with_missing
-        """,
-    )
-
-    # Create duplicates (10% of total) with minor mutations, keep total rows exact
-    _exec(
-        session,
-        f"""
-        CREATE OR REPLACE TEMPORARY TABLE {tmp_final} AS
-        WITH dups AS (
+        ),
+        dups AS (
             SELECT 
                 customer_id || '_DUP' AS customer_id,
-                /* mutate email/phone for ~50% */
                 CASE WHEN UNIFORM(0,1,RANDOM()) < 0.5 AND email IS NOT NULL THEN 
                     REGEXP_REPLACE(email, '@', CAST(UNIFORM(0,9,RANDOM()) AS STRING) || '@')
                 ELSE email END AS email,
@@ -213,26 +174,23 @@ def run(session: Session, target_rows: int = 4_000_000, overwrite: bool = True) 
                 first_name, last_name, gender, profession, date_joined, subscription_level,
                 'DUPLICATE' AS overlap_type
             FROM (
-                SELECT * FROM {tmp_base}
+                SELECT * FROM with_missing
                 WHERE overlap_type = 'NONE'
                 QUALIFY ROW_NUMBER() OVER (ORDER BY RANDOM()) <= {dup_count}
             )
         )
         SELECT customer_id, email, phone, first_name, last_name, gender, profession, date_joined, subscription_level, overlap_type
-        FROM {tmp_base}
+        FROM with_missing
         UNION ALL
         SELECT customer_id, email, phone, first_name, last_name, gender, profession, date_joined, subscription_level, overlap_type
         FROM dups
-        """,
-    )
+    """
 
-    # Persist final table
-    full_table = f"{TARGET_DB}.{RAW_SCHEMA}.{OUTPUT_TABLE}"
     if overwrite:
-        _exec(session, f"CREATE OR REPLACE TABLE {full_table} AS SELECT * FROM {tmp_final}")
+        _exec(session, f"CREATE OR REPLACE TABLE {full_table} AS " + select_sql)
     else:
-        _exec(session, f"CREATE TABLE IF NOT EXISTS {full_table} AS SELECT * FROM {tmp_final} WHERE 1=0")
-        _exec(session, f"INSERT INTO {full_table} SELECT * FROM {tmp_final}")
+        _exec(session, f"CREATE TABLE IF NOT EXISTS {full_table} AS " + select_sql + " WHERE 1=0")
+        _exec(session, f"INSERT INTO {full_table} " + select_sql)
 
     # Return a small preview (
     return session.sql(f"SELECT * FROM {full_table} SAMPLE (100 ROWS)")
