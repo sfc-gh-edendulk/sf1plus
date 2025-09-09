@@ -182,18 +182,18 @@ def run(
                 CASE WHEN (ABS(HASH(slot_index, event_seq, 2)) % 1000) / 1000.0 < 0.7 THEN 'wifi' 
                      WHEN (ABS(HASH(slot_index, event_seq, 2)) % 1000) / 1000.0 < 0.9 THEN 'ethernet' ELSE 'cellular' END AS connection_type,
                 /* Bitrate and QoE */
-                CAST(ROUND(UNIFORM(800, 6500, RANDOM()))) AS bitrate_kbps,
-                CAST(ROUND(UNIFORM(0, 5, RANDOM()))) AS buffer_events,
-                ROUND(UNIFORM(0, 0.08, RANDOM()), 3) AS rebuffer_ratio,
-                CAST(ROUND(UNIFORM(30, 1800, RANDOM()))) AS watch_seconds,
-                /* IP selection via r4 */
+                CAST(800 + (ABS(HASH(slot_index, event_seq, 4)) % 5700)) AS bitrate_kbps,
+                CAST(ABS(HASH(slot_index, event_seq, 5)) % 6) AS buffer_events,
+                ROUND((ABS(HASH(slot_index, event_seq, 6)) % 80) / 1000.0, 3) AS rebuffer_ratio,
+                CAST(30 + (ABS(HASH(slot_index, event_seq, 7)) % 1770)) AS watch_seconds,
+                /* IP selection via deterministic hashing */
                 CASE 
                     WHEN (ABS(HASH(slot_index, event_seq, 3)) % 1000) / 1000.0 < 0.4 THEN 
-                        '81.' || LPAD(CAST(UNIFORM(48, 63, RANDOM()) AS STRING), 2, '0') || '.' || CAST(UNIFORM(0,255,RANDOM()) AS STRING) || '.' || CAST(UNIFORM(0,255,RANDOM()) AS STRING)
+                        '81.' || LPAD(CAST(48 + (ABS(HASH(slot_index, event_seq, 8)) % 16) AS STRING), 2, '0') || '.' || CAST(ABS(HASH(slot_index, event_seq, 9)) % 256 AS STRING) || '.' || CAST(ABS(HASH(slot_index, event_seq, 10)) % 256 AS STRING)
                     WHEN (ABS(HASH(slot_index, event_seq, 3)) % 1000) / 1000.0 < 0.7 THEN 
-                        '82.' || LPAD(CAST(UNIFORM(64, 127, RANDOM()) AS STRING), 3, '0') || '.' || CAST(UNIFORM(0,255,RANDOM()) AS STRING) || '.' || CAST(UNIFORM(0,255,RANDOM()) AS STRING)
+                        '82.' || LPAD(CAST(64 + (ABS(HASH(slot_index, event_seq, 8)) % 64) AS STRING), 3, '0') || '.' || CAST(ABS(HASH(slot_index, event_seq, 9)) % 256 AS STRING) || '.' || CAST(ABS(HASH(slot_index, event_seq, 10)) % 256 AS STRING)
                     ELSE 
-                        '90.' || CAST(UNIFORM(0,255,RANDOM()) AS STRING) || '.' || CAST(UNIFORM(0,255,RANDOM()) AS STRING) || '.' || CAST(UNIFORM(0,255,RANDOM()) AS STRING)
+                        '90.' || CAST(ABS(HASH(slot_index, event_seq, 8)) % 256 AS STRING) || '.' || CAST(ABS(HASH(slot_index, event_seq, 9)) % 256 AS STRING) || '.' || CAST(ABS(HASH(slot_index, event_seq, 10)) % 256 AS STRING)
                 END AS ip_address,
                 CASE 
                     WHEN (ABS(HASH(slot_index, event_seq, 3)) % 1000) / 1000.0 < 0.4 THEN 'Orange'
@@ -218,10 +218,10 @@ def run(
                     ELSE 'Lille'
                 END AS city,
                 CASE 
-                    WHEN UNIFORM(0,1,RANDOM()) < 0.05 THEN 'play_start'
-                    WHEN UNIFORM(0,1,RANDOM()) < 0.80 THEN 'play'
-                    WHEN UNIFORM(0,1,RANDOM()) < 0.90 THEN 'pause'
-                    WHEN UNIFORM(0,1,RANDOM()) < 0.97 THEN 'seek'
+                    WHEN (ABS(HASH(slot_index, event_seq, 11)) % 1000) / 1000.0 < 0.05 THEN 'play_start'
+                    WHEN (ABS(HASH(slot_index, event_seq, 11)) % 1000) / 1000.0 < 0.80 THEN 'play'
+                    WHEN (ABS(HASH(slot_index, event_seq, 11)) % 1000) / 1000.0 < 0.90 THEN 'pause'
+                    WHEN (ABS(HASH(slot_index, event_seq, 11)) % 1000) / 1000.0 < 0.97 THEN 'seek'
                     ELSE 'play_end'
                 END AS event_type
             FROM with_customer
@@ -241,8 +241,8 @@ def run(
                     'device_id', UUID_STRING(),
                     'session_id', UUID_STRING(),
                     'app_name', 'TF1+',
-                    'app_version', '1.' || CAST(UNIFORM(0, 9, RANDOM()) AS STRING) || '.' || CAST(UNIFORM(0, 9, RANDOM()) AS STRING),
-                    'player_version', '4.' || CAST(UNIFORM(0, 4, RANDOM()) AS STRING),
+                    'app_version', '1.' || CAST(ABS(HASH(log_id, 1)) % 10 AS STRING) || '.' || CAST(ABS(HASH(log_id, 2)) % 10 AS STRING),
+                    'player_version', '4.' || CAST(ABS(HASH(log_id, 3)) % 5 AS STRING),
                     'resolution', CASE WHEN bitrate_kbps > 4000 THEN '1920x1080' WHEN bitrate_kbps > 2000 THEN '1280x720' ELSE '854x480' END,
                     'drm', CASE WHEN os_name IN ('Android TV','Android','ChromeOS') THEN 'widevine' WHEN os_name IN ('iOS','iPadOS') THEN 'fairplay' ELSE 'playready' END,
                     'manufacturer', CASE WHEN device_type='SmartTV' THEN 'Samsung' WHEN device_type='Mobile' THEN 'Apple' ELSE 'LG' END,
