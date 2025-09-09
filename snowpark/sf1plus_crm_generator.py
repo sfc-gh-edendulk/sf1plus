@@ -10,6 +10,7 @@ The main entrypoint is the function `run(session, target_rows, overwrite)`.
 """
 
 from typing import Optional
+import uuid
 
 from snowflake.snowpark import Session
 
@@ -55,10 +56,11 @@ def run(session: Session, target_rows: int = 4_000_000, overwrite: bool = True) 
     email_extra_count = int(round(overlap_total_target * email_share / sum_share))
     phone_extra_count = overlap_total_target - triple_count - email_extra_count
 
-    # Temp objects
-    tmp_source = f"TEMP_SF1_SOURCE_{session.get_session_id()[:6]}"
-    tmp_base = f"TEMP_SF1_BASE_{session.get_session_id()[:6]}"
-    tmp_final = f"TEMP_SF1_FINAL_{session.get_session_id()[:6]}"
+    # Temp objects (use UUID suffix for uniqueness across concurrent runs)
+    _suffix = uuid.uuid4().hex[:6]
+    tmp_source = f"TEMP_SF1_SOURCE_{_suffix}"
+    tmp_base = f"TEMP_SF1_BASE_{_suffix}"
+    tmp_final = f"TEMP_SF1_FINAL_{_suffix}"
 
     # Source sample for overlaps (ensure enough rows, cycle via modulo)
     _exec(
