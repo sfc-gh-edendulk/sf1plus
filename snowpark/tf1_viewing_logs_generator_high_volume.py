@@ -39,13 +39,13 @@ def run(
     full_table = f"{TARGET_DB}.{RAW_SCHEMA}.{OUTPUT_TABLE}"
     attach_pct = max(0.0, min(1.0, float(attach_customer_pct)))
 
-    # Create customer mapping for joins
+    # Create customer mapping for joins - get enough customers for proper cycling
     temp_customer_map = f"{TARGET_DB}.{RAW_SCHEMA}.TEMP_CUSTOMER_MAP_HV"
     _exec(session, f"""
         CREATE OR REPLACE TABLE {temp_customer_map} AS
         SELECT customer_id, ROW_NUMBER() OVER (ORDER BY RANDOM()) AS rn
         FROM {CUSTOMER_TABLE}
-        SAMPLE (20)
+        SAMPLE (50)  -- Get more customers for better coverage
     """)
 
     # High-volume generation with efficient patterns
@@ -63,16 +63,20 @@ def run(
         customer_map AS (
             SELECT customer_id, rn FROM {temp_customer_map}
         ),
+        customer_count AS (
+            SELECT COUNT(*) AS total_customers FROM customer_map
+        ),
         events_enriched AS (
             SELECT 
                 e.event_id,
                 e.event_time,
-                -- Customer attachment (30% get real IDs)
+                -- Customer attachment (30% get real IDs) - cycle through available customers
                 CASE WHEN (e.event_id % 100) < ({attach_pct} * 100) 
                      THEN c.customer_id 
                      ELSE NULL END AS customer_id
             FROM base_events e
-            LEFT JOIN customer_map c ON c.rn = ((e.event_id % 1000) + 1)
+            CROSS JOIN customer_count cc
+            LEFT JOIN customer_map c ON c.rn = ((e.event_id % cc.total_customers) + 1)
         ),
         final AS (
             SELECT 
