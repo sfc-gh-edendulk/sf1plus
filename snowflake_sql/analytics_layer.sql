@@ -43,41 +43,41 @@ WITH customer_base AS (
 ),
 viewing_summary AS (
     SELECT 
-        customer_id,
+        l.customer_id,
         COUNT(*) AS total_events,
-        COUNT(DISTINCT DATE(event_time)) AS active_days,
-        COUNT(DISTINCT programme_id) AS unique_programmes_watched,
-        SUM(watch_seconds) AS total_watch_seconds,
-        AVG(watch_seconds) AS avg_watch_seconds,
-        SUM(ad_total_seconds) AS total_ad_seconds,
+        COUNT(DISTINCT DATE(l.event_time)) AS active_days,
+        COUNT(DISTINCT l.programme_id) AS unique_programmes_watched,
+        SUM(l.watch_seconds) AS total_watch_seconds,
+        AVG(l.watch_seconds) AS avg_watch_seconds,
+        SUM(l.ad_total_seconds) AS total_ad_seconds,
         
         -- Device preferences
-        MODE(device_type) AS preferred_device,
-        COUNT(DISTINCT device_type) AS device_types_used,
+        MODE(l.device_type) AS preferred_device,
+        COUNT(DISTINCT l.device_type) AS device_types_used,
         
         -- Connection patterns
-        MODE(connection_type) AS preferred_connection,
-        AVG(bitrate_kbps) AS avg_bitrate,
-        AVG(buffer_events) AS avg_buffer_events,
-        AVG(rebuffer_ratio) AS avg_rebuffer_ratio,
+        MODE(l.connection_type) AS preferred_connection,
+        AVG(l.bitrate_kbps) AS avg_bitrate,
+        AVG(l.buffer_events) AS avg_buffer_events,
+        AVG(l.rebuffer_ratio) AS avg_rebuffer_ratio,
         
         -- Geographic info (most common)
-        MODE(region) AS region,
-        MODE(city) AS city,
-        MODE(isp) AS isp,
+        MODE(l.region) AS region,
+        MODE(l.city) AS city,
+        MODE(l.isp) AS isp,
         
         -- Engagement metrics
-        MIN(event_time) AS first_viewing_date,
-        MAX(event_time) AS last_viewing_date,
-        DATEDIFF('day', MIN(event_time), MAX(event_time)) + 1 AS viewing_span_days
+        MIN(l.event_time) AS first_viewing_date,
+        MAX(l.event_time) AS last_viewing_date,
+        DATEDIFF('day', MIN(l.event_time), MAX(l.event_time)) + 1 AS viewing_span_days
         
-    FROM SF1PLUS_DB.RAW_DATA.TF1_VIEWING_LOGS_HIGH_VOLUME
-    WHERE customer_id IS NOT NULL
-    GROUP BY customer_id
+    FROM SF1PLUS_DB.RAW_DATA.TF1_VIEWING_LOGS_HIGH_VOLUME l
+    WHERE l.customer_id IS NOT NULL
+    GROUP BY l.customer_id
 ),
 engagement_scores AS (
     SELECT 
-        customer_id,
+        v.customer_id,
         -- Engagement score (0-100)
         LEAST(100, 
             (v.total_watch_seconds / 3600.0) * 2 +  -- Hours watched * 2
