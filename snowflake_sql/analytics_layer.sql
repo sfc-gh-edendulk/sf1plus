@@ -61,10 +61,10 @@ viewing_summary AS (
         AVG(buffer_events) AS avg_buffer_events,
         AVG(rebuffer_ratio) AS avg_rebuffer_ratio,
         
-        -- Geographic info (latest)
-        LAST_VALUE(region) OVER (PARTITION BY customer_id ORDER BY event_time) AS region,
-        LAST_VALUE(city) OVER (PARTITION BY customer_id ORDER BY event_time) AS city,
-        LAST_VALUE(isp) OVER (PARTITION BY customer_id ORDER BY event_time) AS isp,
+        -- Geographic info (most common)
+        MODE(region) AS region,
+        MODE(city) AS city,
+        MODE(isp) AS isp,
         
         -- Engagement metrics
         MIN(event_time) AS first_viewing_date,
@@ -80,24 +80,24 @@ engagement_scores AS (
         customer_id,
         -- Engagement score (0-100)
         LEAST(100, 
-            (total_watch_seconds / 3600.0) * 2 +  -- Hours watched * 2
-            active_days * 3 +                      -- Active days * 3  
-            unique_programmes_watched * 0.5        -- Programme variety * 0.5
+            (v.total_watch_seconds / 3600.0) * 2 +  -- Hours watched * 2
+            v.active_days * 3 +                      -- Active days * 3  
+            v.unique_programmes_watched * 0.5        -- Programme variety * 0.5
         ) AS engagement_score,
         
         -- Customer lifetime value proxy
-        CASE subscription_level
+        CASE c.subscription_level
             WHEN 'FREE' THEN 0
             WHEN 'BASIC' THEN 4.99
             WHEN 'STANDARD' THEN 9.99
             WHEN 'PREMIUM' THEN 14.99
-        END * GREATEST(1, viewing_span_days / 30.0) AS estimated_clv,
+        END * GREATEST(1, v.viewing_span_days / 30.0) AS estimated_clv,
         
         -- Viewing intensity
         CASE 
-            WHEN total_watch_seconds / 3600.0 >= 50 THEN 'Heavy Viewer'
-            WHEN total_watch_seconds / 3600.0 >= 20 THEN 'Regular Viewer'
-            WHEN total_watch_seconds / 3600.0 >= 5 THEN 'Light Viewer'
+            WHEN v.total_watch_seconds / 3600.0 >= 50 THEN 'Heavy Viewer'
+            WHEN v.total_watch_seconds / 3600.0 >= 20 THEN 'Regular Viewer'
+            WHEN v.total_watch_seconds / 3600.0 >= 5 THEN 'Light Viewer'
             ELSE 'Minimal Viewer'
         END AS viewer_segment
         
